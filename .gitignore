@@ -1,0 +1,14 @@
+.streamlit/secrets.toml
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+data/
+models/
+.venv/
+
+.mysql-*.cnf
+.mysql-bootstrap.sql
+
+.streamlit/*.bak
