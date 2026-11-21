@@ -1,0 +1,2 @@
+# Copy this file to rag_questions.jsonl, then replace IDs and question with your own labeled examples.
+{"question":"What is the definition of supervised learning?","owner_eduai_id":"EDU-REPLACE-ME","role":"Student","context":{"course":"MCA","semester":"Semester 1","subject":"Machine Learning"},"relevant_document_ids":["REPLACE-WITH-EDUAI-DOCUMENT-UUID"]}

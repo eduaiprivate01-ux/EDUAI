@@ -79,7 +79,10 @@ then sign in and add the course structure:
    check favors diagrams with clear horizontal and vertical strokes, so unusual
    freehand sketches may not be selected. If Ollama or its model is unavailable,
    selectable text and OCR still work.
-   TrOCR processes segmented line images in small batches to limit inference overhead.
+   Scanned PDF OCR supports up to 500 pages per document, with at most 80 OCR
+   lines per page (40,000 total OCR lines per document). The existing 50 MB upload
+   and 1,000,000-character extraction limits still apply. TrOCR processes segmented
+   line images in small batches to limit inference overhead.
    PDF figure line crops are collected across the document and sent in batches
    (8 by default). Set `EDUAI_OCR_BATCH_SIZE=4` in the app's `.env` if memory is
    constrained; larger batches up to 16 may improve throughput when RAM allows.

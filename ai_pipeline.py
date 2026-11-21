@@ -85,9 +85,9 @@ INGEST_BATCH_SIZE = 64
 MAX_VECTOR_RESULTS = 50
 MAX_VECTOR_CANDIDATES = 200
 MAX_QUERY_CHARACTERS = 4_000
-MAX_OCR_PAGES = 50
+MAX_OCR_PAGES = MAX_PDF_PAGES
 MAX_OCR_LINES_PER_PAGE = 80
-MAX_OCR_TOTAL_LINES = 1_500
+MAX_OCR_TOTAL_LINES = MAX_OCR_PAGES * MAX_OCR_LINES_PER_PAGE
 MAX_OCR_IMAGE_PIXELS = 20_000_000
 MAX_DOCX_OCR_IMAGES = 25
 MAX_PDF_FIGURE_IMAGES = 300
@@ -482,49 +482,78 @@ def _handwriting_ocr_runtime():
             gc.collect()
 
 
+def _remove_notebook_rules(image):
+    """Fade long, light horizontal notebook rules while keeping dark ink strokes."""
+    import numpy as np
+    from PIL import Image
+
+    rgb = np.asarray(image.convert("RGB")).copy()
+    grayscale = np.asarray(image.convert("L")).copy()
+    faint_ink = (grayscale >= 145) & (grayscale < 240)
+    dark_ink = grayscale < 145
+    faint_coverage = faint_ink.mean(axis=1)
+    dark_coverage = dark_ink.mean(axis=1)
+
+    # Notebook rules span most of a row and are much lighter than handwriting.
+    rule_rows = (faint_coverage >= 0.35) & (dark_coverage < 0.18)
+    if rule_rows.any():
+        expanded_rows = rule_rows.copy()
+        expanded_rows[1:] |= rule_rows[:-1]
+        expanded_rows[:-1] |= rule_rows[1:]
+        for row in np.flatnonzero(expanded_rows):
+            remove_rule_pixels = grayscale[row] >= 145
+            rgb[row, remove_rule_pixels] = 255
+    return Image.fromarray(rgb)
+
+
 def _line_image_crops(image):
-    """Split a handwritten page into horizontal line images for TrOCR."""
+    """Remove ruled lines, then split handwritten pages into TrOCR line images."""
     import numpy as np
     from PIL import ImageOps
 
-    grayscale = ImageOps.autocontrast(image.convert("L"))
-    pixels = np.asarray(grayscale)
-    height, width = pixels.shape
-    ink = pixels < 210
-    row_threshold = max(2, int(width * 0.001))
-    active_rows = np.flatnonzero(ink.sum(axis=1) >= row_threshold)
-    if active_rows.size == 0:
-        return []
+    cleaned = _remove_notebook_rules(image)
+    grayscale = ImageOps.autocontrast(cleaned.convert("L"))
+    try:
+        pixels = np.asarray(grayscale)
+        height, width = pixels.shape
+        ink = pixels < 210
+        row_threshold = max(2, int(width * 0.001))
+        active_rows = np.flatnonzero(ink.sum(axis=1) >= row_threshold)
+        if active_rows.size == 0:
+            return []
 
-    # Join nearby ink rows into text lines, allowing small gaps from dotted
-    # letters while keeping separate handwritten lines apart.
-    maximum_row_gap = max(4, min(18, height // 150))
-    groups = []
-    start = previous = int(active_rows[0])
-    for row in active_rows[1:]:
-        row = int(row)
-        if row - previous > maximum_row_gap:
-            groups.append((start, previous + 1))
-            start = row
-        previous = row
-    groups.append((start, previous + 1))
+        # Join nearby ink rows, allowing small gaps from dotted letters while
+        # separating notebook lines after their light rules have been removed.
+        maximum_row_gap = max(4, min(18, height // 150))
+        groups = []
+        start = previous = int(active_rows[0])
+        for row in active_rows[1:]:
+            row = int(row)
+            if row - previous > maximum_row_gap:
+                groups.append((start, previous + 1))
+                start = row
+            previous = row
+        groups.append((start, previous + 1))
 
-    x_padding = max(4, int(width * 0.005))
-    y_padding = max(2, int(height * 0.002))
-    crops = []
-    for top, bottom in groups:
-        if bottom - top < 6:
-            continue
-        line_ink = ink[top:bottom]
-        columns = np.flatnonzero(line_ink.sum(axis=0) > 0)
-        if columns.size == 0:
-            continue
-        left = max(0, int(columns[0]) - x_padding)
-        right = min(width, int(columns[-1]) + 1 + x_padding)
-        crop_top = max(0, top - y_padding)
-        crop_bottom = min(height, bottom + y_padding)
-        crops.append(image.crop((left, crop_top, right, crop_bottom)).convert("RGB"))
-    return crops
+        x_padding = max(4, int(width * 0.005))
+        y_padding = max(2, int(height * 0.002))
+        crops = []
+        for top, bottom in groups:
+            if bottom - top < 6:
+                continue
+            line_ink = ink[top:bottom]
+            columns = np.flatnonzero(line_ink.sum(axis=0) > 0)
+            if columns.size == 0:
+                continue
+            left = max(0, int(columns[0]) - x_padding)
+            right = min(width, int(columns[-1]) + 1 + x_padding)
+            crop_top = max(0, top - y_padding)
+            crop_bottom = min(height, bottom + y_padding)
+            crops.append(cleaned.crop((left, crop_top, right, crop_bottom)).convert("RGB"))
+        return crops
+    finally:
+        grayscale.close()
+        cleaned.close()
 
 
 def _recognize_line_crops(
